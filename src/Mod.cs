@@ -1,0 +1,88 @@
+using System;
+using Colossal.IO.AssetDatabase;
+using Colossal.Logging;
+using Game;
+using Game.Modding;
+using Game.Rendering;
+using Game.SceneFlow;
+using ScorchedEarth.Systems;
+
+namespace ScorchedEarth
+{
+    /// <summary>
+    /// Entry point. Registers the mod's systems and settings and nothing else.
+    ///
+    /// Design note on privileges: this mod does not use Harmony and patches no game code,
+    /// creates no entities, and edits no prefabs. It reads the fire simulation's own damage
+    /// figures and writes back mesh colours and tree state - nothing more. It cannot
+    /// desynchronise the simulation and switches off cleanly.
+    /// </summary>
+    public sealed class Mod : IMod
+    {
+        public const string Name = "Scorched Earth";
+        public const string Version = "1.0.0";
+
+        /// <summary>Simulation frames in one in-game day (matches Game.Simulation.TimeSystem).</summary>
+        public const float kFramesPerDay = 262144f;
+
+        public static readonly ILog log =
+            LogManager.GetLogger(nameof(ScorchedEarth)).SetShowsErrorsInUI(false);
+
+        public static Mod Instance { get; private set; }
+
+        public ScorchedEarthSettings Settings { get; private set; }
+
+        public void OnLoad(UpdateSystem updateSystem)
+        {
+            Instance = this;
+            log.Info($"{Name} {Version} loading.");
+
+            // ModSetting's constructor does not apply defaults, so both the live instance and
+            // the fallback handed to LoadSettings have to be primed explicitly. Without this
+            // a fresh install comes up with every slider at zero and every toggle off - and a
+            // zero sprite budget or update interval is not a sane starting point.
+            Settings = new ScorchedEarthSettings(this);
+            Settings.SetDefaults();
+
+            ScorchedEarthSettings defaults = new ScorchedEarthSettings(this);
+            defaults.SetDefaults();
+
+            Settings.RegisterInOptionsUI();
+            GameManager.instance.localizationManager.AddSource("en-US", new LocaleEN(Settings));
+            AssetDatabase.global.LoadSettings(nameof(ScorchedEarth), Settings, defaults);
+
+            // Simulation-time work: how charred things are, and recovering from it.
+            updateSystem.UpdateAt<CharringSystem>(SystemUpdatePhase.GameSimulation);
+            updateSystem.UpdateAt<RecoverySystem>(SystemUpdatePhase.GameSimulation);
+
+            // Charred colours are written straight after the game rebuilds mesh colours, and
+            // before the renderer uploads them. UpdateAfter pins the ordering explicitly
+            // rather than relying on registration order within the phase.
+            updateSystem.UpdateAfter<CharColorSystem, MeshColorSystem>(SystemUpdatePhase.PreCulling);
+
+            log.Info($"{Name} systems registered.");
+        }
+
+        public void OnDispose()
+        {
+            log.Info($"{Name} unloading.");
+
+            Settings?.UnregisterInOptionsUI();
+            Settings = null;
+            Instance = null;
+        }
+
+        /// <summary>Settings accessor that is safe to call before/after load.</summary>
+        public static ScorchedEarthSettings ActiveSettings => Instance?.Settings;
+
+        /// <summary>Verbose log helper - avoids building strings when verbose is off.</summary>
+        public static void Verbose(Func<string> message)
+        {
+            var settings = ActiveSettings;
+            if (settings != null && settings.VerboseLogging)
+            {
+                log.Info(message());
+            }
+        }
+    }
+}
