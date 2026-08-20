@@ -9,11 +9,9 @@ using Game.Tools;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
-using UnityEngine;
 using UnityEngine.Scripting;
 using Color = UnityEngine.Color;
 using Tree = Game.Objects.Tree;
-using Transform = Game.Objects.Transform;
 
 namespace ScorchedEarth.Systems
 {
@@ -30,6 +28,12 @@ namespace ScorchedEarth.Systems
     /// <see cref="TreeState.Dead"/> so it renders with the bare dead-tree mesh, and darkened
     /// on top of that so it reads as charred rather than merely dead.
     /// <see cref="RecoverySystem"/> brings it back later.</para>
+    ///
+    /// <para><b>Iteration.</b> Both passes walk chunks rather than entities. Component
+    /// presence is uniform across a chunk, so questions like "is this a tree" or "does it
+    /// already carry <see cref="Charred"/>" are answered once per chunk instead of once per
+    /// entity - which matters during a spreading forest fire, when the burning query holds
+    /// thousands of entities and this used to cost seven random-access lookups on each.</para>
     /// </summary>
     public sealed partial class CharringSystem : GameSystemBase
     {
@@ -73,6 +77,14 @@ namespace ScorchedEarth.Systems
         private SimulationSystem m_SimulationSystem;
         private EndFrameBarrier m_Barrier;
         private UpdateThrottle m_Throttle;
+
+        private EntityTypeHandle m_EntityType;
+        private ComponentTypeHandle<Tree> m_TreeType;
+        private ComponentTypeHandle<OnFire> m_OnFireType;
+        private ComponentTypeHandle<Damaged> m_DamagedType;
+        private ComponentTypeHandle<Charred> m_CharredType;
+        private ComponentTypeHandle<FireKilledTree> m_FireKilledType;
+        private BufferTypeHandle<MeshColor> m_MeshColorType;
 
         [Preserve]
         protected override void OnCreate()
@@ -121,6 +133,14 @@ namespace ScorchedEarth.Systems
                 },
             });
 
+            m_EntityType = GetEntityTypeHandle();
+            m_TreeType = GetComponentTypeHandle<Tree>();
+            m_OnFireType = GetComponentTypeHandle<OnFire>(true);
+            m_DamagedType = GetComponentTypeHandle<Damaged>(true);
+            m_CharredType = GetComponentTypeHandle<Charred>();
+            m_FireKilledType = GetComponentTypeHandle<FireKilledTree>(true);
+            m_MeshColorType = GetBufferTypeHandle<MeshColor>(true);
+
             // No RequireForUpdate: the burned-tree pass has to run after the fires are out.
         }
 
@@ -155,24 +175,140 @@ namespace ScorchedEarth.Systems
                 return;
             }
 
+            m_EntityType.Update(this);
+            m_TreeType.Update(this);
+            m_OnFireType.Update(this);
+            m_DamagedType.Update(this);
+            m_CharredType.Update(this);
+            m_FireKilledType.Update(this);
+            m_MeshColorType.Update(this);
+
             EntityCommandBuffer commands = m_Barrier.CreateCommandBuffer();
 
-            NativeArray<Entity> burning = m_BurningQuery.ToEntityArray(Allocator.Temp);
-            try
-            {
-                for (int i = 0; i < burning.Length; i++)
-                {
-                    Accumulate(burning[i], settings, ref commands);
-                }
-            }
-            finally
-            {
-                burning.Dispose();
-            }
+            AccumulateBurning(settings, ref commands);
 
             if (settings.CharTrees)
             {
                 CatchUpBurnedTrees(ref commands);
+            }
+        }
+
+        /// <summary>Raises the char level of everything alight, in step with how hard it burns.</summary>
+        private void AccumulateBurning(ScorchedEarthSettings settings, ref EntityCommandBuffer commands)
+        {
+            NativeArray<ArchetypeChunk> chunks = m_BurningQuery.ToArchetypeChunkArray(Allocator.Temp);
+            try
+            {
+                for (int c = 0; c < chunks.Length; c++)
+                {
+                    ArchetypeChunk chunk = chunks[c];
+
+                    // Uniform across the chunk, so each of these is answered once rather than
+                    // once per entity.
+                    bool isTree = chunk.Has<Tree>(ref m_TreeType);
+                    if (isTree ? !settings.CharTrees : !settings.CharBuildings)
+                    {
+                        continue;
+                    }
+
+                    bool hasDamaged = chunk.Has<Damaged>(ref m_DamagedType);
+                    bool hasCharred = chunk.Has<Charred>(ref m_CharredType);
+                    bool hasFireKilled = chunk.Has<FireKilledTree>(ref m_FireKilledType);
+                    bool hasMeshColor = chunk.Has<MeshColor>(ref m_MeshColorType);
+
+                    NativeArray<Entity> entities = chunk.GetNativeArray(m_EntityType);
+                    NativeArray<OnFire> onFires = chunk.GetNativeArray(ref m_OnFireType);
+                    NativeArray<Damaged> damaged = hasDamaged
+                        ? chunk.GetNativeArray(ref m_DamagedType)
+                        : default(NativeArray<Damaged>);
+                    NativeArray<Charred> charredArray = hasCharred
+                        ? chunk.GetNativeArray(ref m_CharredType)
+                        : default(NativeArray<Charred>);
+                    NativeArray<Tree> trees = isTree
+                        ? chunk.GetNativeArray(ref m_TreeType)
+                        : default(NativeArray<Tree>);
+
+                    for (int i = 0; i < entities.Length; i++)
+                    {
+                        OnFire onFire = onFires[i];
+                        if (onFire.m_Intensity <= 0f)
+                        {
+                            continue;
+                        }
+
+                        Entity entity = entities[i];
+
+                        // How badly the fire has actually burned this object.
+                        //
+                        // The fire simulation writes its damage into the y channel, and that
+                        // number is already calibrated against the object's structural
+                        // integrity: it reaches 1 exactly when the object is destroyed.
+                        // Charring follows it rather than integrating elapsed time, so a brief
+                        // fire leaves a scorch and a long one leaves a ruin, on every object,
+                        // without the mod guessing at how long fires last.
+                        float burnDamage = hasDamaged ? math.saturate(damaged[i].m_Damage.y) : 0f;
+
+                        // Soot appears as soon as something is alight, before structural
+                        // damage has had time to build up.
+                        float soot = math.saturate(onFire.m_Intensity * kIntensityToChar) * kIntensitySootShare;
+
+                        float target = math.max(burnDamage, soot);
+
+                        if (isTree)
+                        {
+                            Tree tree = trees[i];
+
+                            if (target >= kTreeDeathThreshold)
+                            {
+                                KillTree(entity, tree, hasFireKilled, hasCharred, hasMeshColor,
+                                         target, ref commands);
+                            }
+
+                            // Soot goes on the bare dead-tree model, never on living foliage.
+                            // Tinting a tree that still has its leaves just turns them black,
+                            // which is not what a burned tree looks like - and the death switch
+                            // happens through a command buffer, so there is a short window where
+                            // the tree is still the living model. Skipping it here means that
+                            // window is never visible.
+                            if ((tree.m_State & TreeState.Dead) == 0)
+                            {
+                                continue;
+                            }
+                        }
+
+                        Charred charred = hasCharred ? charredArray[i] : default(Charred);
+
+                        // Char only ever rises while something is burning; RecoverySystem is
+                        // what brings it back down once the fire is out.
+                        charred.m_Amount = math.max(charred.m_Amount, target);
+                        charred.m_Peak = math.max(charred.m_Peak, charred.m_Amount);
+
+                        RequestRepaint(entity, ref charred, ref commands);
+
+                        if (hasCharred)
+                        {
+                            // Already present, so this is a plain value write - no need to
+                            // spend a command-buffer entry on it.
+                            charredArray[i] = charred;
+                        }
+                        else
+                        {
+                            commands.AddComponent(entity, charred);
+
+                            // The colour cache lives beside the char level; CharColorSystem
+                            // fills it on the first frame it sees the object. Only objects that
+                            // actually carry mesh colours need one.
+                            if (hasMeshColor)
+                            {
+                                commands.AddBuffer<OriginalMeshColor>(entity);
+                            }
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                chunks.Dispose();
             }
         }
 
@@ -185,115 +321,38 @@ namespace ScorchedEarth.Systems
         /// </summary>
         private void CatchUpBurnedTrees(ref EntityCommandBuffer commands)
         {
-            NativeArray<Entity> trees = m_BurnedTreeQuery.ToEntityArray(Allocator.Temp);
+            NativeArray<ArchetypeChunk> chunks = m_BurnedTreeQuery.ToArchetypeChunkArray(Allocator.Temp);
             try
             {
-                for (int i = 0; i < trees.Length; i++)
+                for (int c = 0; c < chunks.Length; c++)
                 {
-                    Entity entity = trees[i];
-                    float burnDamage = math.saturate(
-                        EntityManager.GetComponentData<Damaged>(entity).m_Damage.y);
+                    ArchetypeChunk chunk = chunks[c];
 
-                    if (burnDamage >= kTreeDeathThreshold)
+                    bool hasCharred = chunk.Has<Charred>(ref m_CharredType);
+                    bool hasMeshColor = chunk.Has<MeshColor>(ref m_MeshColorType);
+
+                    NativeArray<Entity> entities = chunk.GetNativeArray(m_EntityType);
+                    NativeArray<Damaged> damaged = chunk.GetNativeArray(ref m_DamagedType);
+                    NativeArray<Tree> trees = chunk.GetNativeArray(ref m_TreeType);
+
+                    for (int i = 0; i < entities.Length; i++)
                     {
-                        KillTree(entity, burnDamage, ref commands);
+                        float burnDamage = math.saturate(damaged[i].m_Damage.y);
+                        if (burnDamage < kTreeDeathThreshold)
+                        {
+                            continue;
+                        }
+
+                        // The query excludes FireKilledTree, so none of these carry one yet.
+                        KillTree(entities[i], trees[i], false, hasCharred, hasMeshColor,
+                                 burnDamage, ref commands);
                     }
                 }
             }
             finally
             {
-                trees.Dispose();
+                chunks.Dispose();
             }
-        }
-
-        /// <summary>Raises an object's char level in step with how hard it is burning.</summary>
-        private void Accumulate(Entity entity, ScorchedEarthSettings settings,
-                                ref EntityCommandBuffer commands)
-        {
-            bool isTree = EntityManager.HasComponent<Tree>(entity);
-            if (isTree ? !settings.CharTrees : !settings.CharBuildings)
-            {
-                return;
-            }
-
-            OnFire onFire = EntityManager.GetComponentData<OnFire>(entity);
-            if (onFire.m_Intensity <= 0f)
-            {
-                return;
-            }
-
-            // How badly the fire has actually burned this object.
-            //
-            // The fire simulation writes its damage into the y channel, and that number is
-            // already calibrated against the object's structural integrity: it reaches 1
-            // exactly when the object is destroyed. Charring follows it rather than
-            // integrating elapsed time, so a brief fire leaves a scorch and a long one leaves
-            // a ruin, on every object, without the mod guessing at how long fires last.
-            float burnDamage = 0f;
-            if (EntityManager.HasComponent<Damaged>(entity))
-            {
-                burnDamage = math.saturate(EntityManager.GetComponentData<Damaged>(entity).m_Damage.y);
-            }
-
-            // Soot appears as soon as something is alight, before structural damage has had
-            // time to build up.
-            float soot = math.saturate(onFire.m_Intensity * kIntensityToChar) * kIntensitySootShare;
-
-            float target = math.max(burnDamage, soot);
-
-            if (isTree)
-            {
-                if (target >= kTreeDeathThreshold)
-                {
-                    KillTree(entity, target, ref commands);
-                }
-
-                // Soot goes on the bare dead-tree model, never on living foliage. Tinting a
-                // tree that still has its leaves just turns them black, which is not what a
-                // burned tree looks like - and the death switch happens through a command
-                // buffer, so there is a short window where the tree is still the living model.
-                // Skipping it here means that window is never visible.
-                if (!IsDeadTree(entity))
-                {
-                    return;
-                }
-            }
-
-            Charred charred;
-            bool isNew = !EntityManager.HasComponent<Charred>(entity);
-            if (isNew)
-            {
-                charred = default(Charred);
-            }
-            else
-            {
-                charred = EntityManager.GetComponentData<Charred>(entity);
-            }
-
-            // Char only ever rises while something is burning; RecoverySystem is what brings
-            // it back down once the fire is out.
-            charred.m_Amount = math.max(charred.m_Amount, target);
-            charred.m_Peak = math.max(charred.m_Peak, charred.m_Amount);
-
-            RequestRepaint(entity, ref charred, ref commands);
-
-            if (isNew)
-            {
-                commands.AddComponent(entity, charred);
-
-                // The colour cache lives beside the char level; CharColorSystem fills it on
-                // the first frame it sees the object. Only objects that actually carry mesh
-                // colours need one.
-                if (EntityManager.HasBuffer<MeshColor>(entity))
-                {
-                    commands.AddBuffer<OriginalMeshColor>(entity);
-                }
-            }
-            else
-            {
-                commands.SetComponent(entity, charred);
-            }
-
         }
 
         /// <summary>
@@ -328,30 +387,94 @@ namespace ScorchedEarth.Systems
             return result;
         }
 
-        private static Color CharChannel(Color source, float amount)
+        /// <summary>
+        /// Darkens one colour channel toward soot.
+        ///
+        /// <para>The HSV conversions are done in <c>Unity.Mathematics</c> rather than through
+        /// <c>Color.RGBToHSV</c>/<c>Color.HSVToRGB</c>. This is the innermost function of the
+        /// only pass that runs every rendered frame, and the two helpers below are plain
+        /// arithmetic on <c>float3</c> where the Unity versions go through managed calls and
+        /// intermediate <c>Color</c> structs.</para>
+        /// </summary>
+        internal static Color CharChannel(Color source, float amount)
         {
             float t = math.saturate(amount);
 
             // Soot: near-black with a faint warm-grey cast, so it does not read as a flat
             // shadow against the terrain.
-            Color soot = new Color(0.055f, 0.048f, 0.045f, source.a);
+            float3 soot = new float3(0.055f, 0.048f, 0.045f);
 
-            float h, sat, v;
-            Color.RGBToHSV(source, out h, out sat, out v);
+            float3 hsv = RgbToHsv(new float3(source.r, source.g, source.b));
 
             // Desaturate first, then darken - in that order the midpoint of the fade looks
             // like ash rather than a muddy version of the original colour.
-            Color desaturated = Color.HSVToRGB(h, sat * (1f - t * 0.8f), v);
-            desaturated.a = source.a;
+            hsv.y *= 1f - t * 0.8f;
 
-            return Color.Lerp(desaturated, soot, t * 0.85f);
+            float3 result = math.lerp(HsvToRgb(hsv), soot, t * 0.85f);
+            return new Color(result.x, result.y, result.z, source.a);
         }
 
-        /// <summary>True when the tree is already rendering with the bare dead-tree model.</summary>
-        private bool IsDeadTree(Entity entity)
+        /// <summary>RGB to HSV. Arithmetic stand-in for <c>Color.RGBToHSV</c>.</summary>
+        private static float3 RgbToHsv(float3 c)
         {
-            return EntityManager.HasComponent<Tree>(entity)
-                && (EntityManager.GetComponentData<Tree>(entity).m_State & TreeState.Dead) != 0;
+            float max = math.cmax(c);
+            float min = math.cmin(c);
+            float delta = max - min;
+
+            float h = 0f;
+            if (delta > 1e-10f)
+            {
+                if (max == c.x)
+                {
+                    h = (c.y - c.z) / delta;
+                }
+                else if (max == c.y)
+                {
+                    h = 2f + (c.z - c.x) / delta;
+                }
+                else
+                {
+                    h = 4f + (c.x - c.y) / delta;
+                }
+
+                h *= 1f / 6f;
+                if (h < 0f)
+                {
+                    h += 1f;
+                }
+            }
+
+            return new float3(h, max > 1e-10f ? delta / max : 0f, max);
+        }
+
+        /// <summary>HSV to RGB. Arithmetic stand-in for <c>Color.HSVToRGB</c>.</summary>
+        private static float3 HsvToRgb(float3 hsv)
+        {
+            float s = math.saturate(hsv.y);
+            float v = hsv.z;
+
+            if (s <= 1e-10f)
+            {
+                return new float3(v, v, v);
+            }
+
+            float h = math.frac(hsv.x) * 6f;
+            int sector = (int)h;
+            float f = h - sector;
+
+            float p = v * (1f - s);
+            float q = v * (1f - s * f);
+            float w = v * (1f - s * (1f - f));
+
+            switch (sector)
+            {
+                case 0: return new float3(v, w, p);
+                case 1: return new float3(q, v, p);
+                case 2: return new float3(p, v, w);
+                case 3: return new float3(p, q, v);
+                case 4: return new float3(w, p, v);
+                default: return new float3(v, p, q);
+            }
         }
 
         /// <summary>
@@ -359,14 +482,14 @@ namespace ScorchedEarth.Systems
         /// can be restored. Dead is a vanilla <see cref="TreeState"/>, so this reuses the
         /// game's existing bare-tree mesh rather than shipping a new asset.
         /// </summary>
-        private void KillTree(Entity entity, float burnAmount, ref EntityCommandBuffer commands)
+        private void KillTree(Entity entity, Tree tree, bool hasFireKilled, bool hasCharred,
+                              bool hasMeshColor, float burnAmount, ref EntityCommandBuffer commands)
         {
-            if (EntityManager.HasComponent<FireKilledTree>(entity))
+            if (hasFireKilled)
             {
                 return;
             }
 
-            Tree tree = EntityManager.GetComponentData<Tree>(entity);
             bool alreadyDead = (tree.m_State & TreeState.Dead) != 0;
 
             if (!alreadyDead)
@@ -385,20 +508,26 @@ namespace ScorchedEarth.Systems
             // Char the bare model straight away rather than waiting to catch the tree alight
             // again on a later tick - by then the fire has usually moved on, which left burned
             // trees looking merely dead instead of burned.
-            StartChar(entity, math.max(burnAmount, kMinTreeChar), ref commands);
+            StartChar(entity, hasCharred, hasMeshColor, math.max(burnAmount, kMinTreeChar), ref commands);
 
             // BatchesUpdated on its own is what the game's own TreeGrowthSystem adds when it
             // changes a tree's state; it makes BatchInstanceSystem re-select the sub-mesh.
             commands.AddComponent<BatchesUpdated>(entity);
 
-            Mod.Verbose(() => "Fire killed tree " + entity.Index
-                            + " (burn " + burnAmount.ToString("0.00") + "); switching to the dead-tree mesh.");
+            // Checked rather than passed as a lambda: a closure is allocated at the call site
+            // whether or not logging is on, and this runs once per tree in a forest fire.
+            if (Mod.IsVerbose)
+            {
+                Mod.log.Info("Fire killed tree " + entity.Index
+                           + " (burn " + burnAmount.ToString("0.00") + "); switching to the dead-tree mesh.");
+            }
         }
 
         /// <summary>Gives an object its initial char level, if it does not have one yet.</summary>
-        private void StartChar(Entity entity, float amount, ref EntityCommandBuffer commands)
+        private static void StartChar(Entity entity, bool hasCharred, bool hasMeshColor,
+                                      float amount, ref EntityCommandBuffer commands)
         {
-            if (EntityManager.HasComponent<Charred>(entity))
+            if (hasCharred)
             {
                 return;
             }
@@ -410,12 +539,11 @@ namespace ScorchedEarth.Systems
 
             commands.AddComponent(entity, charred);
 
-            if (EntityManager.HasBuffer<MeshColor>(entity))
+            if (hasMeshColor)
             {
                 commands.AddBuffer<OriginalMeshColor>(entity);
             }
         }
-
 
         /// <summary>
         /// Drops the elapsed-frame counter when a save is loaded; the new world's frame

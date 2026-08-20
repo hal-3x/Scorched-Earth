@@ -5,7 +5,6 @@ using Game.Tools;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
-using UnityEngine;
 using UnityEngine.Scripting;
 using Color = UnityEngine.Color;
 
@@ -32,6 +31,13 @@ namespace ScorchedEarth.Systems
     /// computed from the original every time and can never compound. The cache is refreshed
     /// whenever the game recomputes an object's colours - detected by the buffer no longer
     /// matching what this system last wrote.</para>
+    ///
+    /// <para><b>Cost.</b> This is the only part of the mod that runs every rendered frame, so
+    /// it is written to do as little as possible. <c>RequireForUpdate</c> keeps it switched
+    /// off entirely while nothing is charred, and once something is, each entity is skipped
+    /// outright unless the game rebuilt its colours or the darkening actually moved - see
+    /// <see cref="Charred.m_RenderedAmount"/>. Only the survivors of those two checks pay
+    /// for the colour maths.</para>
     /// </summary>
     public sealed partial class CharColorSystem : GameSystemBase
     {
@@ -39,6 +45,12 @@ namespace ScorchedEarth.Systems
         private const float kRecaptureEpsilon = 0.002f;
 
         private EntityQuery m_CharredQuery;
+
+        // Cached rather than re-fetched every frame: each Get*TypeHandle call does safety
+        // bookkeeping that is pure overhead at sixty frames a second.
+        private ComponentTypeHandle<Charred> m_CharredType;
+        private BufferTypeHandle<MeshColor> m_MeshColorType;
+        private BufferTypeHandle<OriginalMeshColor> m_OriginalType;
 
         [Preserve]
         protected override void OnCreate()
@@ -60,6 +72,10 @@ namespace ScorchedEarth.Systems
                 },
             });
 
+            m_CharredType = GetComponentTypeHandle<Charred>();
+            m_MeshColorType = GetBufferTypeHandle<MeshColor>();
+            m_OriginalType = GetBufferTypeHandle<OriginalMeshColor>();
+
             RequireForUpdate(m_CharredQuery);
         }
 
@@ -74,26 +90,30 @@ namespace ScorchedEarth.Systems
 
             float strength = settings.CharStrengthNormalized;
 
+            m_CharredType.Update(this);
+            m_MeshColorType.Update(this);
+            m_OriginalType.Update(this);
+
             NativeArray<ArchetypeChunk> chunks = m_CharredQuery.ToArchetypeChunkArray(Allocator.Temp);
             try
             {
-                ComponentTypeHandle<Charred> charredType = GetComponentTypeHandle<Charred>();
-                BufferTypeHandle<MeshColor> meshColorType = GetBufferTypeHandle<MeshColor>();
-                BufferTypeHandle<OriginalMeshColor> originalType = GetBufferTypeHandle<OriginalMeshColor>();
-
                 for (int c = 0; c < chunks.Length; c++)
                 {
                     ArchetypeChunk chunk = chunks[c];
 
-                    NativeArray<Charred> charred = chunk.GetNativeArray(ref charredType);
-                    BufferAccessor<MeshColor> meshColors = chunk.GetBufferAccessor(ref meshColorType);
-                    BufferAccessor<OriginalMeshColor> originals = chunk.GetBufferAccessor(ref originalType);
+                    NativeArray<Charred> charred = chunk.GetNativeArray(ref m_CharredType);
+                    BufferAccessor<MeshColor> meshColors = chunk.GetBufferAccessor(ref m_MeshColorType);
+                    BufferAccessor<OriginalMeshColor> originals = chunk.GetBufferAccessor(ref m_OriginalType);
 
                     for (int i = 0; i < charred.Length; i++)
                     {
                         Charred state = charred[i];
-                        Apply(ref state, meshColors[i], originals[i], strength);
-                        charred[i] = state;
+
+                        // Write the component back only when something actually changed.
+                        if (Apply(ref state, meshColors[i], originals[i], strength))
+                        {
+                            charred[i] = state;
+                        }
                     }
                 }
             }
@@ -103,13 +123,15 @@ namespace ScorchedEarth.Systems
             }
         }
 
-        /// <summary>Writes the darkened colours for one object.</summary>
-        private static void Apply(ref Charred charred, DynamicBuffer<MeshColor> meshColors,
+        /// <summary>
+        /// Writes the darkened colours for one object. Returns whether anything was written.
+        /// </summary>
+        private static bool Apply(ref Charred charred, DynamicBuffer<MeshColor> meshColors,
                                   DynamicBuffer<OriginalMeshColor> originals, float strength)
         {
             if (meshColors.Length == 0)
             {
-                return;
+                return false;
             }
 
             // Re-capture when the game rebuilt these colours: either the buffer changed shape
@@ -117,6 +139,20 @@ namespace ScorchedEarth.Systems
             // was written last time, which only happens when MeshColorSystem has run.
             bool recapture = originals.Length != meshColors.Length
                           || !Approximately(meshColors[0].m_ColorSet.m_Channel0, charred.m_LastWritten);
+
+            float amount = math.saturate(charred.m_Amount) * strength;
+
+            // Nothing to do: the game has not touched these colours, and the darkening they
+            // were produced from has not moved, so the buffer already holds exactly what
+            // would be written. This is the overwhelmingly common case - char changes at most
+            // once every few simulation frames, and this runs on every rendered one.
+            //
+            // Comparing the strength-scaled amount rather than the raw char level means a
+            // change to the strength setting is picked up here too, with no extra state.
+            if (!recapture && charred.m_RenderedAmount == amount)
+            {
+                return false;
+            }
 
             if (recapture)
             {
@@ -129,8 +165,6 @@ namespace ScorchedEarth.Systems
                 }
             }
 
-            float amount = math.saturate(charred.m_Amount) * strength;
-
             for (int i = 0; i < meshColors.Length; i++)
             {
                 MeshColor color = meshColors[i];
@@ -139,6 +173,8 @@ namespace ScorchedEarth.Systems
             }
 
             charred.m_LastWritten = meshColors[0].m_ColorSet.m_Channel0;
+            charred.m_RenderedAmount = amount;
+            return true;
         }
 
         private static bool Approximately(Color a, Color b)

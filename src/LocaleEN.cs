@@ -57,7 +57,7 @@ namespace ScorchedEarth
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(ScorchedEarthSettings.VerboseLogging)), "Verbose logging" },
                 { m_Setting.GetOptionDescLocaleID(nameof(ScorchedEarthSettings.VerboseLogging)),
-                    "Log effect discovery and sprite budgets to the player log. Useful when reporting a problem." },
+                    "Log charring and tree-death decisions to the player log. Useful when reporting a problem." },
             };
         }
 

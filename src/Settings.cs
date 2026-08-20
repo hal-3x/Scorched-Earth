@@ -61,7 +61,7 @@ namespace ScorchedEarth
         [SettingsUISection(kAboutTab, kAboutGroup)]
         public string ModVersion => Mod.Version;
 
-        /// <summary>Extra logging for diagnosing effect discovery. Off by default.</summary>
+        /// <summary>Extra logging for diagnosing charring decisions. Off by default.</summary>
         [SettingsUISection(kAboutTab, kAboutGroup)]
         public bool VerboseLogging { get; set; }
 

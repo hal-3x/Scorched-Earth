@@ -40,7 +40,7 @@ namespace ScorchedEarth
             // ModSetting's constructor does not apply defaults, so both the live instance and
             // the fallback handed to LoadSettings have to be primed explicitly. Without this
             // a fresh install comes up with every slider at zero and every toggle off - and a
-            // zero sprite budget or update interval is not a sane starting point.
+            // zero update interval is not a sane starting point.
             Settings = new ScorchedEarthSettings(this);
             Settings.SetDefaults();
 
@@ -75,11 +75,24 @@ namespace ScorchedEarth
         /// <summary>Settings accessor that is safe to call before/after load.</summary>
         public static ScorchedEarthSettings ActiveSettings => Instance?.Settings;
 
+        /// <summary>
+        /// Whether verbose logging is on. Test this before building a message: passing a
+        /// lambda to <see cref="Verbose"/> allocates a closure at the call site whether or
+        /// not logging is enabled, which matters in loops that run once per burned tree.
+        /// </summary>
+        public static bool IsVerbose
+        {
+            get
+            {
+                var settings = ActiveSettings;
+                return settings != null && settings.VerboseLogging;
+            }
+        }
+
         /// <summary>Verbose log helper - avoids building strings when verbose is off.</summary>
         public static void Verbose(Func<string> message)
         {
-            var settings = ActiveSettings;
-            if (settings != null && settings.VerboseLogging)
+            if (IsVerbose)
             {
                 log.Info(message());
             }

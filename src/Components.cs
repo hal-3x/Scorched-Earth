@@ -22,11 +22,26 @@ namespace ScorchedEarth
         public float m_Peak;
 
         /// <summary>
-        /// Char level the mesh colours were last written at. Recolouring dirties a render
-        /// batch, so colours are only rewritten once the value drifts far enough to be
-        /// visible - see <see cref="Systems.CharringSystem"/>.
+        /// Char level the last repaint was requested at. Dirtying a render batch is not
+        /// free, so <c>BatchesUpdated</c> is only raised once the value drifts far enough
+        /// to be visible - see <see cref="Systems.CharringSystem"/>.
         /// </summary>
         public float m_AppliedAmount;
+
+        /// <summary>
+        /// Darkening strength the mesh colours currently on the entity were produced from,
+        /// i.e. char level times the user's strength setting.
+        ///
+        /// <para>Lets <see cref="Systems.CharColorSystem"/> skip an entity whose buffer
+        /// already holds exactly the right answer, which is the common case: char moves
+        /// every 16 simulation frames at most, while that system runs every rendered
+        /// frame.</para>
+        ///
+        /// <para>Runtime only. It is deliberately absent from <see cref="Serialize"/> and
+        /// <see cref="Deserialize"/>, so adding it does not change the save format; a
+        /// freshly loaded entity simply renders once on the first frame it is seen.</para>
+        /// </summary>
+        public float m_RenderedAmount;
 
         /// <summary>
         /// The first colour channel this mod last wrote into the object's mesh colours.

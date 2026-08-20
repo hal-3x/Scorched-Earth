@@ -3,7 +3,6 @@ using Game;
 using Game.Common;
 using Game.Events;
 using Game.Objects;
-using Game.Rendering;
 using Game.Simulation;
 using Game.Tools;
 using Unity.Collections;
@@ -22,9 +21,14 @@ namespace ScorchedEarth.Systems
     /// reignites keeps blackening instead of cleaning itself mid-fire.</para>
     ///
     /// <para>The end state is exact rather than approximate. Charring is removed by
-    /// switching the per-instance colour override off, which hands colour back to the
-    /// game's own <c>MeshColorSystem</c>; the mod never has to reconstruct what the
-    /// original colours were.</para>
+    /// dropping the mod's own components, which hands colour back to the game's
+    /// <c>MeshColorSystem</c>; the mod never has to reconstruct what the original
+    /// colours were.</para>
+    ///
+    /// <para><b>Iteration.</b> Both passes walk chunks and write component values straight
+    /// into them. Only the two genuinely structural steps - retiring a clean object and
+    /// finishing a regrowth - go through the command buffer, so a city full of slowly
+    /// recovering objects no longer records one buffered write per object per tick.</para>
     /// </summary>
     public sealed partial class RecoverySystem : GameSystemBase
     {
@@ -42,6 +46,11 @@ namespace ScorchedEarth.Systems
         private EndFrameBarrier m_Barrier;
         private SimulationSystem m_SimulationSystem;
         private UpdateThrottle m_Throttle;
+
+        private EntityTypeHandle m_EntityType;
+        private ComponentTypeHandle<Charred> m_CharredType;
+        private ComponentTypeHandle<FireKilledTree> m_FireKilledType;
+        private ComponentTypeHandle<Tree> m_TreeType;
 
         [Preserve]
         protected override void OnCreate()
@@ -77,6 +86,11 @@ namespace ScorchedEarth.Systems
                     ComponentType.ReadOnly<Temp>(),
                 },
             });
+
+            m_EntityType = GetEntityTypeHandle();
+            m_CharredType = GetComponentTypeHandle<Charred>();
+            m_FireKilledType = GetComponentTypeHandle<FireKilledTree>();
+            m_TreeType = GetComponentTypeHandle<Tree>();
         }
 
         /// <summary>
@@ -104,6 +118,16 @@ namespace ScorchedEarth.Systems
                 return;
             }
 
+            if (m_CharredQuery.IsEmptyIgnoreFilter && m_DeadTreeQuery.IsEmptyIgnoreFilter)
+            {
+                return;
+            }
+
+            m_EntityType.Update(this);
+            m_CharredType.Update(this);
+            m_FireKilledType.Update(this);
+            m_TreeType.Update(this);
+
             EntityCommandBuffer commands = m_Barrier.CreateCommandBuffer();
 
             FadeCharring(settings, elapsed, ref commands);
@@ -119,36 +143,42 @@ namespace ScorchedEarth.Systems
                 return;
             }
 
-            NativeArray<Entity> entities = m_CharredQuery.ToEntityArray(Allocator.Temp);
+            NativeArray<ArchetypeChunk> chunks = m_CharredQuery.ToArchetypeChunkArray(Allocator.Temp);
             try
             {
-                for (int i = 0; i < entities.Length; i++)
+                for (int c = 0; c < chunks.Length; c++)
                 {
-                    Entity entity = entities[i];
-                    Charred charred = EntityManager.GetComponentData<Charred>(entity);
+                    ArchetypeChunk chunk = chunks[c];
 
-                    charred.m_Amount = math.max(0f, charred.m_Amount - step);
+                    NativeArray<Entity> entities = chunk.GetNativeArray(m_EntityType);
+                    NativeArray<Charred> charredArray = chunk.GetNativeArray(ref m_CharredType);
 
-                    if (charred.m_Amount <= kCleanThreshold)
+                    for (int i = 0; i < entities.Length; i++)
                     {
-                        Restore(entity, charred, ref commands);
-                        continue;
-                    }
+                        Charred charred = charredArray[i];
 
-                    if (math.abs(charred.m_Amount - charred.m_AppliedAmount) < kRepaintThreshold)
-                    {
-                        // Not visibly different yet - keep the progress, skip the repaint.
-                        commands.SetComponent(entity, charred);
-                        continue;
-                    }
+                        charred.m_Amount = math.max(0f, charred.m_Amount - step);
 
-                    CharringSystem.RequestRepaint(entity, ref charred, ref commands);
-                    commands.SetComponent(entity, charred);
+                        if (charred.m_Amount <= kCleanThreshold)
+                        {
+                            Restore(entities[i], ref commands);
+                            continue;
+                        }
+
+                        // Below the threshold the change is not visibly different yet - keep
+                        // the progress, skip the repaint.
+                        if (math.abs(charred.m_Amount - charred.m_AppliedAmount) >= kRepaintThreshold)
+                        {
+                            CharringSystem.RequestRepaint(entities[i], ref charred, ref commands);
+                        }
+
+                        charredArray[i] = charred;
+                    }
                 }
             }
             finally
             {
-                entities.Dispose();
+                chunks.Dispose();
             }
         }
 
@@ -159,7 +189,7 @@ namespace ScorchedEarth.Systems
         /// own colours on the next batch update, so the result is exactly the original rather
         /// than an approximation of it, and any override another mod owns is left alone.
         /// </summary>
-        private void Restore(Entity entity, Charred charred, ref EntityCommandBuffer commands)
+        private static void Restore(Entity entity, ref EntityCommandBuffer commands)
         {
             commands.RemoveComponent<Charred>(entity);
             commands.RemoveComponent<OriginalMeshColor>(entity);
@@ -182,41 +212,47 @@ namespace ScorchedEarth.Systems
                 return;
             }
 
-            NativeArray<Entity> entities = m_DeadTreeQuery.ToEntityArray(Allocator.Temp);
+            NativeArray<ArchetypeChunk> chunks = m_DeadTreeQuery.ToArchetypeChunkArray(Allocator.Temp);
             try
             {
-                for (int i = 0; i < entities.Length; i++)
+                for (int c = 0; c < chunks.Length; c++)
                 {
-                    Entity entity = entities[i];
-                    FireKilledTree killed = EntityManager.GetComponentData<FireKilledTree>(entity);
+                    ArchetypeChunk chunk = chunks[c];
 
-                    killed.m_Regrowth = math.min(1f, killed.m_Regrowth + step);
+                    NativeArray<Entity> entities = chunk.GetNativeArray(m_EntityType);
+                    NativeArray<FireKilledTree> killedArray = chunk.GetNativeArray(ref m_FireKilledType);
+                    NativeArray<Tree> treeArray = chunk.GetNativeArray(ref m_TreeType);
 
-                    if (killed.m_Regrowth < 1f)
+                    for (int i = 0; i < entities.Length; i++)
                     {
-                        commands.SetComponent(entity, killed);
-                        continue;
+                        FireKilledTree killed = killedArray[i];
+
+                        killed.m_Regrowth = math.min(1f, killed.m_Regrowth + step);
+
+                        if (killed.m_Regrowth < 1f)
+                        {
+                            killedArray[i] = killed;
+                            continue;
+                        }
+
+                        // Come back as a sapling rather than snapping straight to the old size;
+                        // the vanilla growth simulation takes it the rest of the way.
+                        Tree tree = treeArray[i];
+                        tree.m_State = TreeState.Teen;
+                        tree.m_Growth = (byte)math.min((int)killed.m_OriginalGrowth, 64);
+                        treeArray[i] = tree;
+
+                        commands.RemoveComponent<FireKilledTree>(entities[i]);
+                        commands.AddComponent<BatchesUpdated>(entities[i]);
+                        commands.AddComponent<Updated>(entities[i]);
                     }
-
-                    Tree tree = EntityManager.GetComponentData<Tree>(entity);
-
-                    // Come back as a sapling rather than snapping straight to the old size;
-                    // the vanilla growth simulation takes it the rest of the way.
-                    tree.m_State = TreeState.Teen;
-                    tree.m_Growth = (byte)math.min((int)killed.m_OriginalGrowth, 64);
-
-                    commands.SetComponent(entity, tree);
-                    commands.RemoveComponent<FireKilledTree>(entity);
-                    commands.AddComponent<BatchesUpdated>(entity);
-                    commands.AddComponent<Updated>(entity);
                 }
             }
             finally
             {
-                entities.Dispose();
+                chunks.Dispose();
             }
         }
-
 
         /// <summary>
         /// Drops the elapsed-frame counter when a save is loaded; the new world's frame
