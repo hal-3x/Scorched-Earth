@@ -44,6 +44,25 @@ namespace ScorchedEarth
         public float m_RenderedAmount;
 
         /// <summary>
+        /// How strongly this object should read as actively aflame rather than merely
+        /// sooty, 0 (not burning) to 1 (fully alight).
+        ///
+        /// <para>Soot is the wrong answer for a tree that still has its leaves - it paints
+        /// the canopy black, which reads as diseased rather than burning. The canopy is
+        /// exactly where the flames are, so it is tinted toward ember instead, and the soot
+        /// pass takes over once the tree switches to the bare dead model, which has almost
+        /// no leaf surface left for a tint to sit on.</para>
+        ///
+        /// <para>Only honoured while the object still carries <c>OnFire</c>, so it lapses
+        /// on its own when the fire goes out. Runtime only, like the two fields around
+        /// it.</para>
+        /// </summary>
+        public float m_Ember;
+
+        /// <summary>Ember level the colours currently on the entity were produced from.</summary>
+        public float m_RenderedEmber;
+
+        /// <summary>
         /// The first colour channel this mod last wrote into the object's mesh colours.
         ///
         /// <para>It is how the mod notices that the game recomputed an object's colours

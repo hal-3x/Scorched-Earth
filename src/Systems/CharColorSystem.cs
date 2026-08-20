@@ -1,5 +1,6 @@
 using Game;
 using Game.Common;
+using Game.Events;
 using Game.Rendering;
 using Game.Tools;
 using Unity.Collections;
@@ -49,6 +50,7 @@ namespace ScorchedEarth.Systems
         // Cached rather than re-fetched every frame: each Get*TypeHandle call does safety
         // bookkeeping that is pure overhead at sixty frames a second.
         private ComponentTypeHandle<Charred> m_CharredType;
+        private ComponentTypeHandle<OnFire> m_OnFireType;
         private BufferTypeHandle<MeshColor> m_MeshColorType;
         private BufferTypeHandle<OriginalMeshColor> m_OriginalType;
 
@@ -73,6 +75,7 @@ namespace ScorchedEarth.Systems
             });
 
             m_CharredType = GetComponentTypeHandle<Charred>();
+            m_OnFireType = GetComponentTypeHandle<OnFire>(true);
             m_MeshColorType = GetBufferTypeHandle<MeshColor>();
             m_OriginalType = GetBufferTypeHandle<OriginalMeshColor>();
 
@@ -90,7 +93,17 @@ namespace ScorchedEarth.Systems
 
             float strength = settings.CharStrengthNormalized;
 
+            // MeshColorSystem rebuilds mesh colours from scheduled parallel jobs and leaves
+            // them running - it assigns its JobHandle to Dependency rather than completing
+            // it. Reading the buffers on the main thread without waiting can therefore see
+            // the pre-rebuild contents, which makes the recapture check below decide nothing
+            // has changed and skip the entity; the rebuilt clean colours then land on top
+            // and the object renders unburnt until something else dirties it. Hovering does
+            // exactly that, because it marks the object Updated every frame.
+            CompleteDependency();
+
             m_CharredType.Update(this);
+            m_OnFireType.Update(this);
             m_MeshColorType.Update(this);
             m_OriginalType.Update(this);
 
@@ -101,6 +114,10 @@ namespace ScorchedEarth.Systems
                 {
                     ArchetypeChunk chunk = chunks[c];
 
+                    // Chunk-uniform, so the glow is switched off for a whole archetype at
+                    // once the moment the fire component comes off.
+                    bool burning = chunk.Has<OnFire>(ref m_OnFireType);
+
                     NativeArray<Charred> charred = chunk.GetNativeArray(ref m_CharredType);
                     BufferAccessor<MeshColor> meshColors = chunk.GetBufferAccessor(ref m_MeshColorType);
                     BufferAccessor<OriginalMeshColor> originals = chunk.GetBufferAccessor(ref m_OriginalType);
@@ -110,7 +127,7 @@ namespace ScorchedEarth.Systems
                         Charred state = charred[i];
 
                         // Write the component back only when something actually changed.
-                        if (Apply(ref state, meshColors[i], originals[i], strength))
+                        if (Apply(ref state, meshColors[i], originals[i], strength, burning))
                         {
                             charred[i] = state;
                         }
@@ -127,7 +144,8 @@ namespace ScorchedEarth.Systems
         /// Writes the darkened colours for one object. Returns whether anything was written.
         /// </summary>
         private static bool Apply(ref Charred charred, DynamicBuffer<MeshColor> meshColors,
-                                  DynamicBuffer<OriginalMeshColor> originals, float strength)
+                                  DynamicBuffer<OriginalMeshColor> originals, float strength,
+                                  bool burning)
         {
             if (meshColors.Length == 0)
             {
@@ -142,6 +160,10 @@ namespace ScorchedEarth.Systems
 
             float amount = math.saturate(charred.m_Amount) * strength;
 
+            // The glow is only honoured while the object is actually alight, so it lapses by
+            // itself when OnFire comes off - nothing has to remember to clear it.
+            float ember = burning ? math.saturate(charred.m_Ember) : 0f;
+
             // Nothing to do: the game has not touched these colours, and the darkening they
             // were produced from has not moved, so the buffer already holds exactly what
             // would be written. This is the overwhelmingly common case - char changes at most
@@ -149,7 +171,7 @@ namespace ScorchedEarth.Systems
             //
             // Comparing the strength-scaled amount rather than the raw char level means a
             // change to the strength setting is picked up here too, with no extra state.
-            if (!recapture && charred.m_RenderedAmount == amount)
+            if (!recapture && charred.m_RenderedAmount == amount && charred.m_RenderedEmber == ember)
             {
                 return false;
             }
@@ -168,12 +190,18 @@ namespace ScorchedEarth.Systems
             for (int i = 0; i < meshColors.Length; i++)
             {
                 MeshColor color = meshColors[i];
-                color.m_ColorSet = CharringSystem.Char(originals[i].ColorSet, amount);
+
+                // Soot first, then the glow on top: a dead trunk that is still alight should
+                // read as charred wood with fire in it, not as clean wood painted orange.
+                ColorSet charred_ = CharringSystem.Char(originals[i].ColorSet, amount);
+                color.m_ColorSet = ember > 0f ? CharringSystem.Ember(charred_, ember) : charred_;
+
                 meshColors[i] = color;
             }
 
             charred.m_LastWritten = meshColors[0].m_ColorSet.m_Channel0;
             charred.m_RenderedAmount = amount;
+            charred.m_RenderedEmber = ember;
             return true;
         }
 

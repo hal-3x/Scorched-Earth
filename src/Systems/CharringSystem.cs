@@ -43,14 +43,17 @@ namespace ScorchedEarth.Systems
         /// <summary>
         /// Char level at or above which a burned tree is killed outright.
         ///
-        /// <para>Deliberately low. A tree that catches fire does not survive it, so anything
-        /// past a token amount of burning kills it. The previous value of 0.3 needed a fire
-        /// intensity of 50 or more, which meant a tree whose fire was put out early kept its
-        /// soot but stayed a living model - a tree with black leaves rather than a dead one.
-        /// The floor is not zero only so a fire that registers for a single tick at almost no
-        /// intensity does not count.</para>
+        /// <para>This was 0.05 for a while, which killed a tree almost the instant it caught.
+        /// The reason was that a living tree carrying soot looks wrong - black leaves read as
+        /// diseased, not burning - so the shortest possible leafy phase was the least bad
+        /// option. Ember tinting removes that objection: a leafy tree that is alight now
+        /// glows instead of blackening, so it can be left standing and burning long enough to
+        /// see. Lower this toward 0.05 to go back to near-instant deaths.</para>
         /// </summary>
-        private const float kTreeDeathThreshold = 0.05f;
+        private const float kTreeDeathThreshold = 0.25f;
+
+        /// <summary>Fire intensity, 0..100, at which a burning canopy reads as fully alight.</summary>
+        private const float kIntensityToEmber = 0.025f;
 
         /// <summary>Char a fully-raging fire produces on its own, before structural damage.</summary>
         private const float kIntensitySootShare = 0.6f;
@@ -77,6 +80,9 @@ namespace ScorchedEarth.Systems
         private SimulationSystem m_SimulationSystem;
         private EndFrameBarrier m_Barrier;
         private UpdateThrottle m_Throttle;
+
+        /// <summary>Trees killed during the current tick, for one summary log line.</summary>
+        private int m_KillsThisTick;
 
         private EntityTypeHandle m_EntityType;
         private ComponentTypeHandle<Tree> m_TreeType;
@@ -185,11 +191,18 @@ namespace ScorchedEarth.Systems
 
             EntityCommandBuffer commands = m_Barrier.CreateCommandBuffer();
 
+            m_KillsThisTick = 0;
+
             AccumulateBurning(settings, ref commands);
 
             if (settings.CharTrees)
             {
                 CatchUpBurnedTrees(ref commands);
+            }
+
+            if (m_KillsThisTick > 0 && Mod.IsVerbose)
+            {
+                Mod.log.Info($"Fire killed {m_KillsThisTick} tree(s); switching them to the dead-tree mesh.");
             }
         }
 
@@ -258,18 +271,29 @@ namespace ScorchedEarth.Systems
                         {
                             Tree tree = trees[i];
 
+                            float ember = math.saturate(onFire.m_Intensity * kIntensityToEmber);
+
+                            // A burning tree glows whether or not it has died yet; the bare
+                            // dead model simply has very little surface left to carry it.
+                            bool queuedFresh = false;
                             if (target >= kTreeDeathThreshold)
                             {
-                                KillTree(entity, tree, hasFireKilled, hasCharred, hasMeshColor,
-                                         target, ref commands);
+                                queuedFresh = KillTree(entity, tree, hasFireKilled, hasCharred,
+                                                       hasMeshColor, target, ember, ref commands);
                             }
 
-                            // Soot goes on the bare dead-tree model, never on living foliage.
-                            // Tinting a tree that still has its leaves just turns them black,
-                            // which is not what a burned tree looks like - and the death switch
-                            // happens through a command buffer, so there is a short window where
-                            // the tree is still the living model. Skipping it here means that
-                            // window is never visible.
+                            // Only when the kill above did not already queue a Charred of its
+                            // own. Both writing one would mean two AddComponent commands for
+                            // the same entity in one buffer, and the later would win - wiping
+                            // the soot level the kill just set.
+                            if (!queuedFresh)
+                            {
+                                SetEmber(entity, ember, hasCharred, hasMeshColor,
+                                         charredArray, i, ref commands);
+                            }
+
+                            // Soot goes on the bare dead-tree model, never on living foliage -
+                            // the ember tint above is what a leafy tree that is alight wears.
                             if ((tree.m_State & TreeState.Dead) == 0)
                             {
                                 continue;
@@ -345,7 +369,7 @@ namespace ScorchedEarth.Systems
 
                         // The query excludes FireKilledTree, so none of these carry one yet.
                         KillTree(entities[i], trees[i], false, hasCharred, hasMeshColor,
-                                 burnDamage, ref commands);
+                                 burnDamage, 0f, ref commands);
                     }
                 }
             }
@@ -482,60 +506,137 @@ namespace ScorchedEarth.Systems
         /// can be restored. Dead is a vanilla <see cref="TreeState"/>, so this reuses the
         /// game's existing bare-tree mesh rather than shipping a new asset.
         /// </summary>
-        private void KillTree(Entity entity, Tree tree, bool hasFireKilled, bool hasCharred,
-                              bool hasMeshColor, float burnAmount, ref EntityCommandBuffer commands)
+        /// <returns>Whether a fresh <see cref="Charred"/> was queued for this entity.</returns>
+        private bool KillTree(Entity entity, Tree tree, bool hasFireKilled, bool hasCharred,
+                              bool hasMeshColor, float burnAmount, float ember,
+                              ref EntityCommandBuffer commands)
         {
             if (hasFireKilled)
             {
-                return;
+                return false;
             }
 
             bool alreadyDead = (tree.m_State & TreeState.Dead) != 0;
 
+            // Claim the tree whether or not it was already dead. FireKilledTree is what takes
+            // it out of both queries, so skipping it for a tree that happened to be dead when
+            // the fire arrived left that tree eligible forever: it was re-killed on every
+            // tick, for as long as it burned. Naturally dead trees are common in a forest, so
+            // a fire sweeping through one produced thousands of repeat kills.
+            commands.AddComponent(entity, new FireKilledTree
+            {
+                m_Regrowth = 0f,
+                m_OriginalGrowth = tree.m_Growth,
+                m_OriginalState = (byte)tree.m_State,
+            });
+
             if (!alreadyDead)
             {
-                commands.AddComponent(entity, new FireKilledTree
-                {
-                    m_Regrowth = 0f,
-                    m_OriginalGrowth = tree.m_Growth,
-                    m_OriginalState = (byte)tree.m_State,
-                });
-
                 tree.m_State = TreeState.Dead;
+
+                // Reset growth as well. TreeGrowthSystem.TickDead accumulates growth on a
+                // dead tree and clears the dead flag once it passes 256, so a tree killed
+                // at high growth is walked straight back out of the state we just put it
+                // in. Starting from zero buys the regrowth here a full cycle;
+                // RecoverySystem re-asserts the flag if vanilla wins the race anyway.
+                tree.m_Growth = 0;
+
                 commands.SetComponent(entity, tree);
             }
 
             // Char the bare model straight away rather than waiting to catch the tree alight
             // again on a later tick - by then the fire has usually moved on, which left burned
             // trees looking merely dead instead of burned.
-            StartChar(entity, hasCharred, hasMeshColor, math.max(burnAmount, kMinTreeChar), ref commands);
+            bool queuedFresh = StartChar(entity, hasCharred, hasMeshColor,
+                                         math.max(burnAmount, kMinTreeChar), ember, ref commands);
 
             // BatchesUpdated on its own is what the game's own TreeGrowthSystem adds when it
             // changes a tree's state; it makes BatchInstanceSystem re-select the sub-mesh.
             commands.AddComponent<BatchesUpdated>(entity);
 
-            // Checked rather than passed as a lambda: a closure is allocated at the call site
-            // whether or not logging is on, and this runs once per tree in a forest fire.
-            if (Mod.IsVerbose)
-            {
-                Mod.log.Info("Fire killed tree " + entity.Index
-                           + " (burn " + burnAmount.ToString("0.00") + "); switching to the dead-tree mesh.");
-            }
+            // Counted rather than logged. One line per tree meant ~19k lines from a single
+            // forest fire, which is both useless to read and enough log traffic to trip a
+            // null dereference inside the game's own logger.
+            m_KillsThisTick++;
+
+            return queuedFresh;
         }
 
-        /// <summary>Gives an object its initial char level, if it does not have one yet.</summary>
-        private static void StartChar(Entity entity, bool hasCharred, bool hasMeshColor,
-                                      float amount, ref EntityCommandBuffer commands)
+        /// <summary>
+        /// Marks a burning object as alight so <see cref="CharColorSystem"/> tints it toward
+        /// ember. Deliberately leaves <see cref="Charred.m_Amount"/> alone: soot belongs to
+        /// the bare model, and an object that survives its fire is then retired by
+        /// <see cref="RecoverySystem"/> on the first tick after the flames are out.
+        /// </summary>
+        private static void SetEmber(Entity entity, float ember, bool hasCharred, bool hasMeshColor,
+                                     NativeArray<Charred> charredArray, int index,
+                                     ref EntityCommandBuffer commands)
         {
             if (hasCharred)
             {
+                Charred charred = charredArray[index];
+
+                // The stored value doubles as the last-repainted level, so this only dirties
+                // a batch when the glow has actually moved.
+                if (math.abs(ember - charred.m_Ember) >= kRepaintThreshold)
+                {
+                    commands.AddComponent<BatchesUpdated>(entity);
+                }
+
+                charred.m_Ember = ember;
+                charredArray[index] = charred;
                 return;
+            }
+
+            Charred fresh = default(Charred);
+            fresh.m_Ember = ember;
+
+            commands.AddComponent(entity, fresh);
+            commands.AddComponent<BatchesUpdated>(entity);
+
+            if (hasMeshColor)
+            {
+                commands.AddBuffer<OriginalMeshColor>(entity);
+            }
+        }
+
+        /// <summary>
+        /// Pushes a colour set toward burning ember. Unlike <see cref="Char"/> this brightens
+        /// rather than darkens - a canopy that is alight is the brightest thing in the scene,
+        /// not the darkest.
+        /// </summary>
+        internal static ColorSet Ember(ColorSet source, float amount)
+        {
+            ColorSet result = default(ColorSet);
+            result.m_Channel0 = EmberChannel(source.m_Channel0, amount);
+            result.m_Channel1 = EmberChannel(source.m_Channel1, amount);
+            result.m_Channel2 = EmberChannel(source.m_Channel2, amount);
+            return result;
+        }
+
+        private static Color EmberChannel(Color source, float amount)
+        {
+            float t = math.saturate(amount);
+            float3 ember = new float3(1f, 0.35f, 0.05f);
+            float3 rgb = new float3(source.r, source.g, source.b);
+            float3 result = math.lerp(rgb, ember, t);
+            return new Color(result.x, result.y, result.z, source.a);
+        }
+
+        /// <summary>Gives an object its initial char level, if it does not have one yet.</summary>
+        private static bool StartChar(Entity entity, bool hasCharred, bool hasMeshColor,
+                                      float amount, float ember, ref EntityCommandBuffer commands)
+        {
+            if (hasCharred)
+            {
+                return false;
             }
 
             Charred charred = default(Charred);
             charred.m_Amount = math.saturate(amount);
             charred.m_Peak = charred.m_Amount;
             charred.m_AppliedAmount = charred.m_Amount;
+            charred.m_Ember = ember;
 
             commands.AddComponent(entity, charred);
 
@@ -543,6 +644,8 @@ namespace ScorchedEarth.Systems
             {
                 commands.AddBuffer<OriginalMeshColor>(entity);
             }
+
+            return true;
         }
 
         /// <summary>

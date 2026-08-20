@@ -232,6 +232,35 @@ namespace ScorchedEarth.Systems
                         if (killed.m_Regrowth < 1f)
                         {
                             killedArray[i] = killed;
+
+                            // Vanilla TreeGrowthSystem.TickDead accumulates growth on a dead
+                            // tree and clears TreeState.Dead once it passes 256, walking a
+                            // fire-killed tree back to its living model while this mod is
+                            // still darkening it - a green tree painted black.
+                            //
+                            // Holding growth at zero is what actually prevents that: vanilla
+                            // ticks a given tree roughly every 16k frames and adds at most 8,
+                            // while this runs every 256, so the counter never gets near the
+                            // threshold. Re-asserting the flag as well covers the case where
+                            // it slipped through anyway - for instance while the tree was
+                            // still alight, which this query excludes.
+                            Tree stillDead = treeArray[i];
+                            bool revived = (stillDead.m_State & TreeState.Dead) == 0;
+
+                            if (revived || stillDead.m_Growth != 0)
+                            {
+                                stillDead.m_State = TreeState.Dead;
+                                stillDead.m_Growth = 0;
+                                treeArray[i] = stillDead;
+
+                                // Only the mesh swap needs a batch rebuild; pinning the
+                                // counter changes nothing on screen.
+                                if (revived)
+                                {
+                                    commands.AddComponent<BatchesUpdated>(entities[i]);
+                                }
+                            }
+
                             continue;
                         }
 

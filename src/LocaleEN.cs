@@ -25,6 +25,7 @@ namespace ScorchedEarth
                 { m_Setting.GetOptionTabLocaleID(ScorchedEarthSettings.kAboutTab), "About" },
 
                 { m_Setting.GetOptionGroupLocaleID(ScorchedEarthSettings.kCharringGroup), "Charring and recovery" },
+                { m_Setting.GetOptionGroupLocaleID(ScorchedEarthSettings.kGroundGroup), "Scorched ground" },
                 { m_Setting.GetOptionGroupLocaleID(ScorchedEarthSettings.kBudgetGroup), "Update rate" },
                 { m_Setting.GetOptionGroupLocaleID(ScorchedEarthSettings.kAboutGroup), "About" },
 
@@ -47,6 +48,26 @@ namespace ScorchedEarth
                 { m_Setting.GetOptionLabelLocaleID(nameof(ScorchedEarthSettings.TreeRecoveryDays)), "Tree recovery (days)" },
                 { m_Setting.GetOptionDescLocaleID(nameof(ScorchedEarthSettings.TreeRecoveryDays)),
                     "In-game days for a fire-killed tree to come back to life." },
+
+                { m_Setting.GetOptionLabelLocaleID(nameof(ScorchedEarthSettings.ScorchGround)), "Scorch the ground" },
+                { m_Setting.GetOptionDescLocaleID(nameof(ScorchedEarthSettings.ScorchGround)),
+                    "Paint burnt ground under fires with the game's surface painter. Burn scars are permanent - paint over them yourself if you want them gone." },
+
+                { m_Setting.GetOptionLabelLocaleID(nameof(ScorchedEarthSettings.ScorchChannel)), "Surface channel" },
+                { m_Setting.GetOptionDescLocaleID(nameof(ScorchedEarthSettings.ScorchChannel)),
+                    "Which of the four paintable surface channels to burn into. What each one looks like is set by your map, not by this mod - so pick the one your map dresses as dirt or burnt ground, and one you are not already using for something else." },
+
+                { m_Setting.GetOptionLabelLocaleID(nameof(ScorchedEarthSettings.ScorchRadius)), "Scorch radius (m)" },
+                { m_Setting.GetOptionDescLocaleID(nameof(ScorchedEarthSettings.ScorchRadius)),
+                    "How wide a patch of burnt ground each fire leaves behind." },
+
+                { m_Setting.GetOptionLabelLocaleID(nameof(ScorchedEarthSettings.ScorchOpacity)), "Scorch strength" },
+                { m_Setting.GetOptionDescLocaleID(nameof(ScorchedEarthSettings.ScorchOpacity)),
+                    "How strongly each fire stains the ground beneath it." },
+
+                { m_Setting.GetOptionLabelLocaleID(nameof(ScorchedEarthSettings.ScorchWarning)), "" },
+                { m_Setting.GetOptionDescLocaleID(nameof(ScorchedEarthSettings.ScorchWarning)),
+                    "Burn scars are permanent. This mod paints them and never erases them - clearing a surface channel wipes every channel at once, which would destroy your own painted surfaces wherever a fire reached. To remove a scar, paint over it yourself with the landscaping surface tool." },
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(ScorchedEarthSettings.UpdateInterval)), "Update interval (frames)" },
                 { m_Setting.GetOptionDescLocaleID(nameof(ScorchedEarthSettings.UpdateInterval)),

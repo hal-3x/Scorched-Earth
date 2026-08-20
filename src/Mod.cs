@@ -55,6 +55,10 @@ namespace ScorchedEarth
             updateSystem.UpdateAt<CharringSystem>(SystemUpdatePhase.GameSimulation);
             updateSystem.UpdateAt<RecoverySystem>(SystemUpdatePhase.GameSimulation);
 
+            // Ground scorching paints into the terrain splatmap through the game's own
+            // surface painter. It creates no entities and builds no geometry.
+            updateSystem.UpdateAt<ScorchSurfaceSystem>(SystemUpdatePhase.GameSimulation);
+
             // Charred colours are written straight after the game rebuilds mesh colours, and
             // before the renderer uploads them. UpdateAfter pins the ordering explicitly
             // rather than relying on registration order within the phase.
