@@ -5,6 +5,7 @@ using Game;
 using Game.Modding;
 using Game.Rendering;
 using Game.SceneFlow;
+using Unity.Entities;
 using ScorchedEarth.Systems;
 
 namespace ScorchedEarth
@@ -59,6 +60,14 @@ namespace ScorchedEarth
             // surface painter. It creates no entities and builds no geometry.
             updateSystem.UpdateAt<ScorchSurfaceSystem>(SystemUpdatePhase.GameSimulation);
 
+            // Retunes the fire simulation by rewriting the prefab data it reads.
+            updateSystem.UpdateAt<FireTuningSystem>(SystemUpdatePhase.GameSimulation);
+
+            // The ignite tool runs in the tool phases, like every other tool.
+            updateSystem.UpdateAt<IgniteToolSystem>(SystemUpdatePhase.ToolUpdate);
+            IgniteTool = World.DefaultGameObjectInjectionWorld
+                              .GetOrCreateSystemManaged<IgniteToolSystem>();
+
             // Charred colours are written straight after the game rebuilds mesh colours, and
             // before the renderer uploads them. UpdateAfter pins the ordering explicitly
             // rather than relying on registration order within the phase.
@@ -73,8 +82,15 @@ namespace ScorchedEarth
 
             Settings?.UnregisterInOptionsUI();
             Settings = null;
+            IgniteTool = null;
             Instance = null;
         }
+
+        /// <summary>
+        /// The ignite tool, so the options screen's button can reach it. Null until a city is
+        /// loaded, which is why the button checks before using it.
+        /// </summary>
+        public static Systems.IgniteToolSystem IgniteTool { get; private set; }
 
         /// <summary>Settings accessor that is safe to call before/after load.</summary>
         public static ScorchedEarthSettings ActiveSettings => Instance?.Settings;

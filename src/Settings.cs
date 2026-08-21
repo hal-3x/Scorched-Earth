@@ -12,22 +12,108 @@ namespace ScorchedEarth
     /// scaled down on weaker machines without editing code.
     /// </summary>
     [FileLocation("ModsSettings/ScorchedEarth/ScorchedEarth")]
-    [SettingsUITabOrder(kVisualsTab, kPerformanceTab, kAboutTab)]
-    [SettingsUIGroupOrder(kCharringGroup, kGroundGroup, kBudgetGroup, kAboutGroup)]
-    [SettingsUIShowGroupName(kCharringGroup, kGroundGroup, kBudgetGroup)]
+    [SettingsUITabOrder(kSimulationTab, kVisualsTab, kPerformanceTab, kAboutTab)]
+    [SettingsUIGroupOrder(kSimulationGroup, kToolGroup, kCharringGroup, kGroundGroup, kBudgetGroup, kAboutGroup)]
+    [SettingsUIShowGroupName(kSimulationGroup, kToolGroup, kCharringGroup, kGroundGroup, kBudgetGroup)]
     public class ScorchedEarthSettings : ModSetting
     {
+        public const string kSimulationTab = "Fire";
         public const string kVisualsTab = "Visuals";
         public const string kPerformanceTab = "Performance";
         public const string kAboutTab = "About";
 
         public const string kCharringGroup = "Charring and recovery";
         public const string kGroundGroup = "Scorched ground";
+        public const string kSimulationGroup = "Fire simulation";
+        public const string kToolGroup = "Fire tool";
         public const string kBudgetGroup = "Update rate";
         public const string kAboutGroup = "About";
 
         public ScorchedEarthSettings(IMod mod) : base(mod)
         {
+        }
+
+        // -------------------------------------------------------- fire simulation
+
+        // Percentages rather than presets, and split by what is burning. Five named tiers
+        // could not express "a bit less than that", and one tier had to serve fire crossing a
+        // firebreak and fire crossing a garden fence at once - which is why balancing them
+        // against each other kept failing. 100 is the game as shipped, in every case.
+
+        /// <summary>How readily fire moves from one building to another, 100 = vanilla.</summary>
+        [SettingsUISlider(min = 25f, max = 400f, step = 5f, unit = "percentage")]
+        [SettingsUISection(kSimulationTab, kSimulationGroup)]
+        public int BuildingSpread { get; set; }
+
+        /// <summary>
+        /// How far a burning building can reach, 100 = vanilla.
+        ///
+        /// <para>Separate from the chance above because it is a different question: reach
+        /// decides whether the next building is a candidate at all, and the chance only
+        /// matters once it is. Below the reach, no amount of the other setting does
+        /// anything.</para>
+        /// </summary>
+        [SettingsUISlider(min = 25f, max = 300f, step = 5f, unit = "percentage")]
+        [SettingsUISection(kSimulationTab, kSimulationGroup)]
+        public int BuildingSpreadRange { get; set; }
+
+        /// <summary>How readily fire moves through trees and vegetation, 100 = vanilla.</summary>
+        [SettingsUISlider(min = 25f, max = 400f, step = 5f, unit = "percentage")]
+        [SettingsUISection(kSimulationTab, kSimulationGroup)]
+        public int VegetationSpread { get; set; }
+
+        /// <summary>How far a burning tree can reach, 100 = vanilla.</summary>
+        [SettingsUISlider(min = 25f, max = 300f, step = 5f, unit = "percentage")]
+        [SettingsUISection(kSimulationTab, kSimulationGroup)]
+        public int VegetationSpreadRange { get; set; }
+
+        /// <summary>How quickly a burning building falls down, 100 = vanilla.</summary>
+        [SettingsUISlider(min = 25f, max = 400f, step = 5f, unit = "percentage")]
+        [SettingsUISection(kSimulationTab, kSimulationGroup)]
+        public int CollapseSpeed { get; set; }
+
+        /// <summary>Puts all three sliders back to the values the game ships with.</summary>
+        [SettingsUIButton]
+        [SettingsUISection(kSimulationTab, kSimulationGroup)]
+        public bool ResetFireTuning
+        {
+            set
+            {
+                BuildingSpread = 100;
+                BuildingSpreadRange = 100;
+                VegetationSpread = 100;
+                VegetationSpreadRange = 100;
+                CollapseSpeed = 100;
+                ApplyAndSave();
+            }
+        }
+
+        /// <summary>
+        /// Standing note for the fire tab. Both settings above rewrite prefab data, which is
+        /// rebuilt from the game's assets on every launch and never written to a save.
+        /// </summary>
+        [SettingsUIMultilineText]
+        [SettingsUISection(kSimulationTab, kSimulationGroup)]
+        public string FireSimulationNote => string.Empty;
+
+        // -------------------------------------------------------------- fire tool
+
+        /// <summary>Arms the ignite tool; the next click in the world starts a fire.</summary>
+        [SettingsUIButton]
+        [SettingsUISection(kSimulationTab, kToolGroup)]
+        public bool ArmIgniteTool
+        {
+            set
+            {
+                Systems.IgniteToolSystem tool = Mod.IgniteTool;
+                if (tool == null)
+                {
+                    Mod.log.Warn("Ignite tool is not available - load a city first.");
+                    return;
+                }
+
+                tool.Arm();
+            }
         }
 
         // ---------------------------------------------------------------- charring
@@ -122,6 +208,12 @@ namespace ScorchedEarth
             // splatmap channel whose appearance the map decides, and the marks are permanent
             // - so which channel to use, and whether to use one at all, is a choice the
             // player has to make with their own map in front of them.
+            BuildingSpread = 100;
+            BuildingSpreadRange = 100;
+            VegetationSpread = 100;
+            VegetationSpreadRange = 100;
+            CollapseSpeed = 100;
+
             ScorchGround = false;
             ScorchChannel = 1;
             // The playable-area splatmap is 4096 texels across roughly 14 km and samples with
@@ -162,6 +254,40 @@ namespace ScorchedEarth
 
         [SettingsUIHidden]
         public float ScorchOpacityNormalized => math.saturate(ScorchOpacity / 100f);
+
+        // ------------------------------------------------- fire tuning, in usable units
+        //
+        // Each slider is a plain multiplier on how often the thing it names happens, with 1
+        // meaning vanilla. Turning that into the numbers the simulation wants is the fiddly
+        // part, and it is done here so the tuning system reads as intent rather than algebra.
+
+        [SettingsUIHidden]
+        public float BuildingSpreadFactor => math.max(0.01f, BuildingSpread / 100f);
+
+        [SettingsUIHidden]
+        public float VegetationSpreadFactor => math.max(0.01f, VegetationSpread / 100f);
+
+        [SettingsUIHidden]
+        public float BuildingRangeFactor => math.max(0.01f, BuildingSpreadRange / 100f);
+
+        [SettingsUIHidden]
+        public float VegetationRangeFactor => math.max(0.01f, VegetationSpreadRange / 100f);
+
+        [SettingsUIHidden]
+        public float CollapseSpeedFactor => math.max(0.01f, CollapseSpeed / 100f);
+
+        /// <summary>
+        /// What to multiply <c>FireData.m_SpreadProbability</c> by for a given slider.
+        ///
+        /// <para>The simulation takes <c>sqrt(m_SpreadProbability * 0.01)</c>, so the stored
+        /// number has to be squared to move the effective one linearly. Squaring here is what
+        /// makes the slider feel proportional instead of flattening out as it is dragged.
+        /// </para>
+        /// </summary>
+        public static float SpreadProbabilityScale(float factor)
+        {
+            return factor * factor;
+        }
 
         /// <summary>The chosen channel as the enum the painter actually takes.</summary>
         [SettingsUIHidden]

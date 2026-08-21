@@ -141,6 +141,22 @@ namespace ScorchedEarth
     }
 
     /// <summary>
+    /// Marks the object under the ignite tool's cursor.
+    ///
+    /// <para>Taking over as the active tool costs the game's own hover highlight, and a tool
+    /// with no toolbar entry gives no sign it is armed at all. Both are solved by the same
+    /// trick: the object about to be lit is made to glow as though it already were, reusing
+    /// the ember tint the charring pass already knows how to draw. What you are pointing at
+    /// and what is about to happen to it are then the same picture.</para>
+    ///
+    /// <para>Runtime only, and never serialized - it is added and removed as the cursor
+    /// moves.</para>
+    /// </summary>
+    public struct IgnitePreview : IComponentData, IQueryTypeParameter
+    {
+    }
+
+    /// <summary>
     /// Attached to a tree that fire killed. The tree is switched to the vanilla dead
     /// state so it renders with the bare dead-tree mesh, then slowly regrows.
     /// </summary>

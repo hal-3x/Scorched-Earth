@@ -51,6 +51,7 @@ namespace ScorchedEarth.Systems
         // bookkeeping that is pure overhead at sixty frames a second.
         private ComponentTypeHandle<Charred> m_CharredType;
         private ComponentTypeHandle<OnFire> m_OnFireType;
+        private ComponentTypeHandle<IgnitePreview> m_PreviewType;
         private BufferTypeHandle<MeshColor> m_MeshColorType;
         private BufferTypeHandle<OriginalMeshColor> m_OriginalType;
 
@@ -76,6 +77,7 @@ namespace ScorchedEarth.Systems
 
             m_CharredType = GetComponentTypeHandle<Charred>();
             m_OnFireType = GetComponentTypeHandle<OnFire>(true);
+            m_PreviewType = GetComponentTypeHandle<IgnitePreview>(true);
             m_MeshColorType = GetBufferTypeHandle<MeshColor>();
             m_OriginalType = GetBufferTypeHandle<OriginalMeshColor>();
 
@@ -104,6 +106,7 @@ namespace ScorchedEarth.Systems
 
             m_CharredType.Update(this);
             m_OnFireType.Update(this);
+            m_PreviewType.Update(this);
             m_MeshColorType.Update(this);
             m_OriginalType.Update(this);
 
@@ -115,8 +118,11 @@ namespace ScorchedEarth.Systems
                     ArchetypeChunk chunk = chunks[c];
 
                     // Chunk-uniform, so the glow is switched off for a whole archetype at
-                    // once the moment the fire component comes off.
-                    bool burning = chunk.Has<OnFire>(ref m_OnFireType);
+                    // once the moment the fire component comes off. A previewed object glows
+                    // on the same path without being alight, which is how the ignite tool
+                    // shows what it is pointing at.
+                    bool burning = chunk.Has<OnFire>(ref m_OnFireType)
+                                || chunk.Has<IgnitePreview>(ref m_PreviewType);
 
                     NativeArray<Charred> charred = chunk.GetNativeArray(ref m_CharredType);
                     BufferAccessor<MeshColor> meshColors = chunk.GetBufferAccessor(ref m_MeshColorType);
