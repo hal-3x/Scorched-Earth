@@ -2,3 +2,5 @@ bin/
 obj/
 tools/.buildcache/
 *.user
+parked-visuals/
+.gitignore

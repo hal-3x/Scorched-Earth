@@ -1,38 +1,14 @@
-# Scorched Earth — Charring
+# Scorched Earth
 
-A Cities: Skylines II mod that makes fire leave a mark.
+Hello, I am Alex, I told Claude to make this mod. I make no claim to any of the code that this mod uses, it was made entirely with Claude Code.
+I do not claim that this mod is stable or gameplay friendly, please be careful when using it and save often. **I do not want to be blamed for any destroyed cities.**
+If you find any bugs, please let me know I'll ask Claude to fix them when I have freetime. There is a strong likelihood this mod will not be maintained don't get too attached.
+If you want to use any of the code in this mod, please feel free but be careful what you take as, obviously, *AI is stupid* and this mod is filled with poor coding choices.
 
-- Objects that survive a fire are darkened with soot, and clean up slowly afterwards.
-- Trees killed by fire switch to the game's dead-tree model, darkened so they read as charred,
-  and regrow later.
+Claude wrote this really long and in-depth explanation of how the mod works so I'm just gonna leave that there incase you want to read it.
+Thanks for taking an interest in my dumb idea.
 
-That's the whole scope. Fire *spread* and fire/smoke *rendering* were originally part of this
-and have been split out — see [Split-out work](#split-out-work).
-
----
-
-## Installing
-
-Copy `bin/ScorchedEarth.dll` into
-
-```
-%LOCALAPPDATA%Low\Colossal Order\Cities Skylines II\.cache\Mods\local\ScorchedEarth```
-
-then enable it in the game's mod list. `tools/build.py --deploy` does this for you.
-
-If the mod stops appearing in the mod list or in Skyve, the local entry has probably been
-dropped from your playset by a backend sync. `python tools/enable_local_mod.py --status` shows
-you; running it without `--status` (game closed) puts the entry back.
-
-## Building
-
-```bash
-dotnet build ScorchedEarth.csproj -c Release          # with the .NET SDK
-pip install pythonnet && python tools/build.py       # without any SDK
-```
-
-`tools/build.py` fetches the Roslyn compiler and hosts it on the .NET runtime the game's
-launcher already installs, compiling straight against `Cities2_Data/Managed`.
+- XOXO, Gossip Girl
 
 ---
 

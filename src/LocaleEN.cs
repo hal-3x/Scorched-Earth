@@ -34,35 +34,35 @@ namespace ScorchedEarth
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(ScorchedEarthSettings.BuildingSpread)), "Building to building" },
                 { m_Setting.GetOptionDescLocaleID(nameof(ScorchedEarthSettings.BuildingSpread)),
-                    "How readily fire moves from one building to the next, where 100% is the game as shipped. This covers both how far a burning building can reach and how easily its neighbours catch. Spontaneous fires are held at the vanilla rate whatever you set here." },
+                    "How quickly fire will spread between buildings." },
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(ScorchedEarthSettings.BuildingSpreadRange)), "Building reach" },
                 { m_Setting.GetOptionDescLocaleID(nameof(ScorchedEarthSettings.BuildingSpreadRange)),
-                    "How far a burning building can reach, where 100% is the game as shipped. This is the gate: a neighbour further away than this is never even considered, so the chance above does nothing until the reach covers it. Raising it costs performance during large fires, because the game searches this radius around every burning object." },
+                    "How far the fire from one burning building will spread to another burning building." },
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(ScorchedEarthSettings.VegetationSpread)), "Tree to tree" },
                 { m_Setting.GetOptionDescLocaleID(nameof(ScorchedEarthSettings.VegetationSpread)),
-                    "How readily fire moves through trees and vegetation, where 100% is the game as shipped. Separate from buildings because a forest fire crossing a firebreak and a house fire crossing a garden fence want very different numbers." },
+                    "How quickly fire will spread throught vegetation." },
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(ScorchedEarthSettings.VegetationSpreadRange)), "Tree reach" },
                 { m_Setting.GetOptionDescLocaleID(nameof(ScorchedEarthSettings.VegetationSpreadRange)),
-                    "How far a burning tree can reach, where 100% is the game as shipped. Raise it to let fire jump firebreaks and gaps in woodland; lower it to make clearings stop a fire. Costs performance during large fires for the same reason as building reach." },
+                    "How far the fire from burning tree will spread to another burning tree." },
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(ScorchedEarthSettings.CollapseSpeed)), "Collapse speed" },
                 { m_Setting.GetOptionDescLocaleID(nameof(ScorchedEarthSettings.CollapseSpeed)),
-                    "How quickly a burning building falls down, where 100% is the game as shipped. Note that this works against spread: a building that collapses quickly stops being a fire source, so a high setting gives you fewer fires that travel, not more." },
+                    "How quickly a building will collapse from fire damage. Higher values make buildings collapse sooner and lower values make it take longer." },
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(ScorchedEarthSettings.ResetFireTuning)), "Reset to default" },
                 { m_Setting.GetOptionDescLocaleID(nameof(ScorchedEarthSettings.ResetFireTuning)),
-                    "Puts every slider on this tab back to 100%, which is the fire simulation exactly as the game ships it." },
+                    "Restores vanilla fire behavior by setting every slider back to 100%" },
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(ScorchedEarthSettings.FireSimulationNote)), "" },
                 { m_Setting.GetOptionDescLocaleID(nameof(ScorchedEarthSettings.FireSimulationNote)),
-                    "Both settings work by rewriting the values the game's own fire simulation reads. Nothing is written to your save - the game rebuilds those values from its assets every launch - so setting them back to Vanilla, or removing this mod, restores shipped behaviour exactly." },
+                    "Both settings work by rewriting the values the game's own fire simulation reads." },
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(ScorchedEarthSettings.ArmIgniteTool)), "Start a fire" },
                 { m_Setting.GetOptionDescLocaleID(nameof(ScorchedEarthSettings.ArmIgniteTool)),
-                    "Arms the fire tool. Close this menu and click a building or tree to set it alight; right-click cancels. The fire it starts is a real one - it spreads, damages and calls out fire engines like any other." },
+                    "Debug tool to spawn fires on vegetation or objects. Click this button and close out of settings, buildings will highlight orange when hovered over and trees will not (known bug), click to start a fire. Right click to cancel." },
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(ScorchedEarthSettings.CharBuildings)), "Char buildings" },
                 { m_Setting.GetOptionDescLocaleID(nameof(ScorchedEarthSettings.CharBuildings)),
@@ -70,7 +70,7 @@ namespace ScorchedEarth
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(ScorchedEarthSettings.CharTrees)), "Char and kill trees" },
                 { m_Setting.GetOptionDescLocaleID(nameof(ScorchedEarthSettings.CharTrees)),
-                    "Burned trees switch to the bare dead-tree model, darkened to look charred, and regrow later." },
+                    "Burned trees switch to the bare dead-tree model, darkened to look charred, and regrow later. Trees may flicker from their dead model to their living model from time to time, I have no idea why, just try to ignore it." },
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(ScorchedEarthSettings.CharStrength)), "Char strength" },
                 { m_Setting.GetOptionDescLocaleID(nameof(ScorchedEarthSettings.CharStrength)),
@@ -78,19 +78,19 @@ namespace ScorchedEarth
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(ScorchedEarthSettings.CharRecoveryDays)), "Char recovery (days)" },
                 { m_Setting.GetOptionDescLocaleID(nameof(ScorchedEarthSettings.CharRecoveryDays)),
-                    "In-game days for a charred surface to return to its original colour." },
+                    "In-game days for a charred surface to return to its original colour. Unsure if this works, largely untested. Burned areas may need to be cleared to remove char effects." },
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(ScorchedEarthSettings.TreeRecoveryDays)), "Tree recovery (days)" },
                 { m_Setting.GetOptionDescLocaleID(nameof(ScorchedEarthSettings.TreeRecoveryDays)),
-                    "In-game days for a fire-killed tree to come back to life." },
+                    "In-game days for a fire-killed tree to come back to life. Unsure if this works, largely untested. Burned areas may need to be cleared to remove char effects." },
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(ScorchedEarthSettings.ScorchGround)), "Scorch the ground" },
                 { m_Setting.GetOptionDescLocaleID(nameof(ScorchedEarthSettings.ScorchGround)),
-                    "Paint burnt ground under fires with the game's surface painter. Burn scars are permanent - paint over them yourself if you want them gone." },
+                    "WARNING, BURN MARKS ARE PERMANENT. This setting will paint surfaces on the ground beneath fire sources. What is painted will not be automatically removed, you will have to repaint it yourself and will damage your work!! Use Cautiously!!" },
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(ScorchedEarthSettings.ScorchChannel)), "Surface channel" },
                 { m_Setting.GetOptionDescLocaleID(nameof(ScorchedEarthSettings.ScorchChannel)),
-                    "Which of the four paintable surface channels to burn into. What each one looks like is set by your map, not by this mod - so pick the one your map dresses as dirt or burnt ground, and one you are not already using for something else." },
+                    "Which of the four paintable surface channels to paint scorch marks." },
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(ScorchedEarthSettings.ScorchRadius)), "Scorch radius (m)" },
                 { m_Setting.GetOptionDescLocaleID(nameof(ScorchedEarthSettings.ScorchRadius)),
@@ -98,15 +98,15 @@ namespace ScorchedEarth
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(ScorchedEarthSettings.ScorchOpacity)), "Scorch strength" },
                 { m_Setting.GetOptionDescLocaleID(nameof(ScorchedEarthSettings.ScorchOpacity)),
-                    "How strongly each fire stains the ground beneath it." },
+                    "How strongly/opacity each fire paints the ground beneath it." },
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(ScorchedEarthSettings.ScorchWarning)), "" },
                 { m_Setting.GetOptionDescLocaleID(nameof(ScorchedEarthSettings.ScorchWarning)),
-                    "Burn scars are permanent. This mod paints them and never erases them - clearing a surface channel wipes every channel at once, which would destroy your own painted surfaces wherever a fire reached. To remove a scar, paint over it yourself with the landscaping surface tool." },
+                    "Burn scars are permanent. To remove a scar, paint over it yourself with the landscaping surface tool." },
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(ScorchedEarthSettings.UpdateInterval)), "Update interval (frames)" },
                 { m_Setting.GetOptionDescLocaleID(nameof(ScorchedEarthSettings.UpdateInterval)),
-                    "Simulation frames between charring updates. Higher is cheaper but slower to react." },
+                    "Simulation frames between charring updates. Higher values cost performance, lower values are less accurate." },
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(ScorchedEarthSettings.ModVersion)), "Version" },
                 { m_Setting.GetOptionDescLocaleID(nameof(ScorchedEarthSettings.ModVersion)), "Installed mod version." },
