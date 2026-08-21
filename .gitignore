@@ -3,7 +3,6 @@ obj/
 tools/.buildcache/
 *.user
 parked-visuals/
-.gitignore/
 tools/
 ScorchedEarth.csproj
 properties/
